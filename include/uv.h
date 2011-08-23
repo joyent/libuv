@@ -42,6 +42,7 @@ typedef intptr_t ssize_t;
 #endif
 
 typedef struct uv_err_s uv_err_t;
+typedef struct uv_object_s uv_object_t;
 typedef struct uv_handle_s uv_handle_t;
 typedef struct uv_stream_s uv_stream_t;
 typedef struct uv_tcp_s uv_tcp_t;
@@ -173,7 +174,7 @@ typedef enum {
 } uv_err_code;
 
 typedef enum {
-  UV_UNKNOWN_HANDLE = 0,
+  UV_UNKNOWN_OBJECT = 0,
   UV_TCP,
   UV_UDP,
   UV_NAMED_PIPE,
@@ -187,11 +188,7 @@ typedef enum {
   UV_ARES_TASK,
   UV_ARES_EVENT,
   UV_GETADDRINFO,
-  UV_PROCESS
-} uv_handle_type;
-
-typedef enum {
-  UV_UNKNOWN_REQ = 0,
+  UV_PROCESS,
   UV_CONNECT,
   UV_ACCEPT,
   UV_READ,
@@ -200,7 +197,7 @@ typedef enum {
   UV_WAKEUP,
   UV_UDP_SEND,
   UV_REQ_TYPE_PRIVATE
-} uv_req_type;
+} uv_object_type;
 
 
 struct uv_err_s {
@@ -221,9 +218,20 @@ char* uv_strerror(uv_err_t err);
 const char* uv_err_name(uv_err_t err);
 
 
-#define UV_REQ_FIELDS \
+#define UV_OBJECT_FIELDS \
   /* read-only */ \
-  uv_req_type type; \
+  uv_object_type type; \
+  /* private */ \
+  UV_OBJECT_PRIVATE_FIELDS
+
+/* Abstract base class of all requests and handles. */
+struct uv_object_s {
+  UV_OBJECT_FIELDS
+};
+
+
+#define UV_REQ_FIELDS \
+  UV_OBJECT_FIELDS \
   /* public */ \
   void* data; \
   /* private */ \
@@ -258,15 +266,14 @@ struct uv_shutdown_s {
 
 
 #define UV_HANDLE_FIELDS \
-  /* read-only */ \
-  uv_handle_type type; \
+  UV_OBJECT_FIELDS \
   /* public */ \
   uv_close_cb close_cb; \
   void* data; \
   /* private */ \
   UV_HANDLE_PRIVATE_FIELDS
 
-/* The abstract base class of all handles.  */
+/* The abstract base class of all handles. */
 struct uv_handle_s {
   UV_HANDLE_FIELDS
 };

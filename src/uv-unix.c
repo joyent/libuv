@@ -1837,7 +1837,7 @@ int uv_read_stop(uv_stream_t* stream) {
 
 void uv__req_init(uv_req_t* req) {
   uv_counters()->req_init++;
-  req->type = UV_UNKNOWN_REQ;
+  req->type = UV_UNKNOWN_OBJECT;
   req->data = NULL;
 }
 

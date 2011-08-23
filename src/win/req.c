@@ -28,7 +28,7 @@
 
 void uv_req_init(uv_req_t* req) {
   uv_counters()->req_init++;
-  req->type = UV_UNKNOWN_REQ;
+  req->type = UV_UNKNOWN_OBJECT;
   SET_REQ_SUCCESS(req);
 }
 

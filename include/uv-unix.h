@@ -39,6 +39,8 @@ typedef struct {
   size_t len;
 } uv_buf_t;
 
+#define UV_OBJECT_PRIVATE_FIELDS /* empty */
+
 #define UV_REQ_BUFSML_SIZE (4)
 
 #define UV_REQ_PRIVATE_FIELDS  /* empty */

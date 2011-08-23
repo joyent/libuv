@@ -51,6 +51,9 @@ typedef struct uv_buf_t {
   UV_PROCESS_CLOSE,                       \
   UV_UDP_RECV
 
+#define UV_OBJECT_PRIVATE_FIELDS          \
+  /* empty */
+
 #define UV_REQ_PRIVATE_FIELDS             \
   union {                                 \
     /* Used by I/O operations */          \
