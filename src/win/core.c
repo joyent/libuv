@@ -156,6 +156,7 @@ static void uv_poll_ex(int block) {
 
 
 #define UV_LOOP(poll)                                                         \
+  int mb;                                                                     \
   while (LOOP->refs > 0) {                                                    \
     uv_update_time();                                                         \
     uv_process_timers();                                                      \
@@ -168,9 +169,11 @@ static void uv_poll_ex(int block) {
     /* Completely flush all pending reqs and endgames. */                     \
     /* We do even when we just called the idle callbacks because those may */ \
     /* have closed handles or started requests that short-circuited. */       \
+    mb = 100;                                                                 \
     while (LOOP->pending_reqs_tail || LOOP->endgame_handles) {                \
       uv_process_endgames();                                                  \
       uv_process_reqs();                                                      \
+      if (--mb <= 0) break;                                                   \
     }                                                                         \
                                                                               \
     if (LOOP->refs <= 0) {                                                    \
@@ -179,7 +182,7 @@ static void uv_poll_ex(int block) {
                                                                               \
     uv_prepare_invoke();                                                      \
                                                                               \
-    poll(LOOP->idle_handles == NULL && LOOP->refs > 0);                       \
+    poll(LOOP->idle_handles == NULL && LOOP->pending_reqs_tail == NULL && LOOP->refs > 0);                       \
                                                                               \
     uv_check_invoke();                                                        \
   }

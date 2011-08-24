@@ -91,6 +91,7 @@ static uv_req_t* uv_remove_pending_req() {
 
 void uv_process_reqs() {
   uv_req_t* req;
+  int mb = 100;
 
   while (req = uv_remove_pending_req()) {
     switch (req->type) {
@@ -153,5 +154,7 @@ void uv_process_reqs() {
       default:
         assert(0);
     }
+
+    if (mb-- <= 0) break;
   }
 }
