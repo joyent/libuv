@@ -404,6 +404,10 @@ struct uv_tcp_s {
 
 int uv_tcp_init(uv_tcp_t* handle);
 
+#ifdef _WIN32
+  int uv_tcp_import(uv_tcp_t* handle, SOCKET sock);
+#endif
+
 int uv_tcp_bind(uv_tcp_t* handle, struct sockaddr_in);
 int uv_tcp_bind6(uv_tcp_t* handle, struct sockaddr_in6);
 

@@ -841,6 +841,15 @@ int uv_spawn(uv_process_t* process, uv_process_options_t options) {
     application_path = application;
   }
 
+  /* Initialize the startup struct minus the stdio handles. */
+  startup.cb = sizeof(startup);
+  startup.lpReserved = NULL;
+  startup.lpDesktop = NULL;
+  startup.lpTitle = NULL;
+  startup.dwFlags = STARTF_USESTDHANDLES;
+  startup.cbReserved2 = 0;
+  startup.lpReserved2 = NULL;
+
   /* Create stdio pipes. */
   if (options.stdin_stream) {
     err = uv_create_stdio_pipe_pair(options.stdin_stream, &process->stdio_pipes[0].child_pipe, PIPE_ACCESS_OUTBOUND, GENERIC_READ | FILE_WRITE_ATTRIBUTES);
@@ -849,6 +858,11 @@ int uv_spawn(uv_process_t* process, uv_process_options_t options) {
     }
 
     process->stdio_pipes[0].server_pipe = options.stdin_stream;
+    startup.hStdInput = process->stdio_pipes[0].child_pipe;
+  } else {
+    process->stdio_pipes[0].server_pipe = NULL;
+    process->stdio_pipes[0].child_pipe = INVALID_HANDLE_VALUE;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   }
 
   if (options.stdout_stream) {
@@ -858,6 +872,11 @@ int uv_spawn(uv_process_t* process, uv_process_options_t options) {
     }
 
     process->stdio_pipes[1].server_pipe = options.stdout_stream;
+    startup.hStdOutput = process->stdio_pipes[1].child_pipe;
+  } else {
+    process->stdio_pipes[1].server_pipe = NULL;
+    process->stdio_pipes[1].child_pipe = INVALID_HANDLE_VALUE;
+    startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
   }
 
   if (options.stderr_stream) {
@@ -867,18 +886,12 @@ int uv_spawn(uv_process_t* process, uv_process_options_t options) {
     }
 
     process->stdio_pipes[2].server_pipe = options.stderr_stream;
+    startup.hStdError = process->stdio_pipes[2].child_pipe;
+  } else {
+    process->stdio_pipes[2].server_pipe = NULL;
+    process->stdio_pipes[2].child_pipe = INVALID_HANDLE_VALUE;
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
   }
-
-  startup.cb = sizeof(startup);
-  startup.lpReserved = NULL;
-  startup.lpDesktop = NULL;
-  startup.lpTitle = NULL;
-  startup.dwFlags = STARTF_USESTDHANDLES;
-  startup.cbReserved2 = 0;
-  startup.lpReserved2 = NULL;
-  startup.hStdInput = process->stdio_pipes[0].child_pipe;
-  startup.hStdOutput = process->stdio_pipes[1].child_pipe;
-  startup.hStdError = process->stdio_pipes[2].child_pipe;
 
   if (CreateProcessW(application_path,
                      arguments,

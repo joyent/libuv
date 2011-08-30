@@ -61,6 +61,7 @@ typedef struct uv_buf_t {
       OVERLAPPED overlapped;              \
       size_t queued_bytes;                \
     };                                    \
+    HANDLE wait;                          \
   };                                      \
   struct uv_req_s* next_req;
 

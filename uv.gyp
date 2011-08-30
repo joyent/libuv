@@ -261,6 +261,25 @@
     },
 
     {
+      'target_name': 'prefork',
+      'type': 'executable',
+      'dependencies': [ 'uv' ],
+      'sources': [
+        'prefork.c',
+      ],
+      'conditions': [
+        [ 'OS=="win"', {
+          'libraries': [ 'ws2_32.lib' ]
+        }]
+      ],
+      'msvs-settings': {
+        'VCLinkerTool': {
+          'SubSystem': 1, # /subsystem:console
+        },
+      },
+    },
+
+    {
       'target_name': 'run-benchmarks',
       'type': 'executable',
       'dependencies': [ 'uv' ],

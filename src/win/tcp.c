@@ -69,8 +69,7 @@ static int uv_tcp_set_socket(uv_tcp_t* handle, SOCKET socket) {
                              LOOP->iocp,
                              (ULONG_PTR)socket,
                              0) == NULL) {
-    uv_set_sys_error(GetLastError());
-    return -1;
+    handle->flags |= UV_HANDLE_EMULATE_IOCP;
   }
 
   if (pSetFileCompletionNotificationModes) {
@@ -99,6 +98,23 @@ int uv_tcp_init(uv_tcp_t* handle) {
   handle->reqs_pending = 0;
 
   uv_counters()->tcp_init++;
+
+  return 0;
+}
+
+
+int uv_tcp_import(uv_tcp_t* handle, SOCKET sock) {
+  int r;
+
+  if (uv_tcp_init(handle) != 0) {
+    return -1;
+  }
+
+  if (uv_tcp_set_socket(handle, sock) != 0) {
+    return -1;
+  }
+
+  handle->flags |= UV_HANDLE_BOUND;
 
   return 0;
 }
@@ -212,6 +228,18 @@ int uv_tcp_bind6(uv_tcp_t* handle, struct sockaddr_in6 addr) {
   }
 }
 
+static void CALLBACK post_completion(void* context, BOOLEAN timed_out) {
+  uv_req_t* req = (uv_req_t*) context;
+
+  assert(req != NULL);
+  assert(!timed_out);
+
+  UnregisterWait(req->wait);
+  CloseHandle(req->overlapped.hEvent);
+  req->overlapped.hEvent = NULL;
+
+  PostQueuedCompletionStatus(LOOP->iocp, req->overlapped.InternalHigh, NULL, &req->overlapped);
+}
 
 static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
   BOOL success;
@@ -244,6 +272,17 @@ static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
   /* Prepare the overlapped structure. */
   memset(&(req->overlapped), 0, sizeof(req->overlapped));
 
+  if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
+    req->overlapped.hEvent = CreateEvent(NULL, 0, 0, NULL);
+    if (!req->overlapped.hEvent) {
+      SET_REQ_ERROR(req, GetLastError());
+      uv_insert_pending_req((uv_req_t*)req);
+      handle->reqs_pending++;
+      return;
+    }
+    req->overlapped.hEvent = (HANDLE) ((DWORD) req->overlapped.hEvent | 1);
+  }
+
   success = pAcceptExFamily(handle->socket,
                           accept_socket,
                           (void*)req->accept_buffer,
@@ -262,6 +301,13 @@ static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
     /* The req will be processed with IOCP. */
     req->accept_socket = accept_socket;
     handle->reqs_pending++;
+    if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
+      if (!RegisterWaitForSingleObject(&req->wait, req->overlapped.hEvent, post_completion, (void*) req, INFINITE, WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE)) {
+        SET_REQ_ERROR(req, GetLastError());
+        uv_insert_pending_req((uv_req_t*)req);
+        return;
+      }
+    }
   } else {
     /* Make this req pending reporting an error. */
     SET_REQ_ERROR(req, WSAGetLastError());
@@ -269,6 +315,10 @@ static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
     handle->reqs_pending++;
     /* Destroy the preallocated client socket. */
     closesocket(accept_socket);
+    /* Destroy the event handle */
+    if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
+      CloseHandle(req->overlapped.hEvent);
+    }
   }
 }
 
