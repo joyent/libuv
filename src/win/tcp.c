@@ -234,11 +234,7 @@ static void CALLBACK post_completion(void* context, BOOLEAN timed_out) {
   assert(req != NULL);
   assert(!timed_out);
 
-  UnregisterWait(req->wait);
-  CloseHandle(req->overlapped.hEvent);
-  req->overlapped.hEvent = NULL;
-
-  PostQueuedCompletionStatus(LOOP->iocp, req->overlapped.InternalHigh, NULL, &req->overlapped);
+  PostQueuedCompletionStatus(LOOP->iocp, req->overlapped.InternalHigh, 0, &req->overlapped);
 }
 
 static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
@@ -271,16 +267,8 @@ static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
 
   /* Prepare the overlapped structure. */
   memset(&(req->overlapped), 0, sizeof(req->overlapped));
-
   if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
-    req->overlapped.hEvent = CreateEvent(NULL, 0, 0, NULL);
-    if (!req->overlapped.hEvent) {
-      SET_REQ_ERROR(req, GetLastError());
-      uv_insert_pending_req((uv_req_t*)req);
-      handle->reqs_pending++;
-      return;
-    }
-    req->overlapped.hEvent = (HANDLE) ((DWORD) req->overlapped.hEvent | 1);
+    req->overlapped.hEvent = (HANDLE) ((DWORD) req->event_handle | 1);
   }
 
   success = pAcceptExFamily(handle->socket,
@@ -301,8 +289,8 @@ static void uv_tcp_queue_accept(uv_tcp_t* handle, uv_tcp_accept_t* req) {
     /* The req will be processed with IOCP. */
     req->accept_socket = accept_socket;
     handle->reqs_pending++;
-    if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
-      if (!RegisterWaitForSingleObject(&req->wait, req->overlapped.hEvent, post_completion, (void*) req, INFINITE, WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE)) {
+    if ((handle->flags & UV_HANDLE_EMULATE_IOCP) && !req->wait_handle) {
+      if (!RegisterWaitForSingleObject(&req->wait_handle, req->overlapped.hEvent, post_completion, (void*) req, INFINITE, WT_EXECUTEINWAITTHREAD)) {
         SET_REQ_ERROR(req, GetLastError());
         uv_insert_pending_req((uv_req_t*)req);
         return;
@@ -421,6 +409,15 @@ int uv_tcp_listen(uv_tcp_t* handle, int backlog, uv_connection_cb cb) {
     req->type = UV_ACCEPT;
     req->accept_socket = INVALID_SOCKET;
     req->data = handle;
+    req->wait_handle = NULL;
+    if (handle->flags & UV_HANDLE_EMULATE_IOCP) {
+      req->event_handle = CreateEvent(NULL, 0, 0, NULL);
+      if (!req->event_handle) {
+        uv_fatal_error(GetLastError(), "CreateEvent");
+      }
+    } else {
+      req->event_handle = NULL;
+    }
     uv_tcp_queue_accept(handle, req);
   }
 

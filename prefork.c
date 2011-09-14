@@ -5,8 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_CHILDREN 3 /* Not including the master server */
-
 int server_id;
 int accepted = 0;
 
@@ -53,7 +51,7 @@ void spawn(int id, SOCKET sock) {
   uv_process_t* process;
   WSAPROTOCOL_INFOW* blob;
   uv_process_options_t options;
-  char* args[3];
+  char* args[4];
   char id_str[3];
   uv_write_t* wr_req;
   uv_buf_t buf;
@@ -64,8 +62,9 @@ void spawn(int id, SOCKET sock) {
   _snprintf(id_str, sizeof id_str, "%d", id);
 
   args[0] = exe_path;
-  args[1] = id_str;
-  args[2] = NULL;
+  args[1] = "--child";
+  args[2] = id_str;
+  args[3] = NULL;
 
   r = uv_pipe_init(in);
   CHECK(r == 0);
@@ -97,7 +96,7 @@ void cl_close_cb(uv_handle_t* handle) {
 }
 
 void cl_write_cb(uv_write_t* req, int status) {
-  CHECK(status == 0);
+  //CHECK(status == 0);
 
   uv_close((uv_handle_t*) req->handle, cl_close_cb);
 
@@ -111,7 +110,12 @@ void cl_write(uv_tcp_t* handle) {
   uv_write_t* req = malloc(sizeof *req);
 
   r = uv_write(req, (uv_stream_t*) handle, &buf, 1, cl_write_cb);
-  CHECK(r == 0);
+  if (r) {
+    LOG("error");
+    uv_close((uv_handle_t*) handle, cl_close_cb);
+    free(req);
+  }
+  
 
   // Pretend our server is very busy:
   // Sleep(10);
@@ -146,18 +150,13 @@ void master() {
   r = uv_tcp_init(&server);
   CHECK(r == 0);
 
-  r = uv_tcp_bind(&server, uv_ip4_addr("0.0.0.0", 8000));
+  r = uv_tcp_bind(&server, uv_ip4_addr("0.0.0.0", 80));
   CHECK(r == 0);
 
   exe_path_size = sizeof exe_path;
   r = uv_exepath(exe_path, &exe_path_size);
   CHECK(r == 0);
   exe_path[exe_path_size] = '\0';
-
-  // Spawn slaves
-  for (i = NUM_CHILDREN; i > 0; i--) {
-    spawn(i, server.socket);
-  }
 }
 
 
@@ -179,25 +178,45 @@ void slave() {
   CHECK(r == 0);
 }
 
+
 int main(int argv, char** argc) {
   int r;
 
   uv_init();
 
-  if (argv == 1) {
+  if (argv < 3) {
+    int i;
+    int num_children = 0;
+
+    if (argv == 2) {
+      num_children = strtol(argc[1], NULL, 10);
+    }
+
     /* We're the master process */
     server_id = 0;
+
     master();
 
+    // Start listening now
+    LOG("listen\n");
+    r = uv_listen((uv_stream_t*) &server, 10, connection_cb);
+    CHECK(r == 0);
+    
+    // Spawn slaves
+    for (i = num_children; i > 0; i--) {
+      spawn(i, server.socket);
+    }
   } else {
     /* We're a slave process */
-    server_id = strtol(argc[1], NULL, 10);
+    server_id = strtol(argc[2], NULL, 10);
     slave();
+
+    // Start listening now
+    LOG("listen\n");
+    r = uv_listen((uv_stream_t*) &server, 10, connection_cb);
+    CHECK(r == 0);
   }
 
-  // Start listening now
-  r = uv_listen((uv_stream_t*) &server, 512, connection_cb);
-  CHECK(r == 0);
 
   r = uv_timer_init(&timer);
   CHECK(r == 0);

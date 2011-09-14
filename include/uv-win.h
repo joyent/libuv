@@ -61,7 +61,6 @@ typedef struct uv_buf_t {
       OVERLAPPED overlapped;              \
       size_t queued_bytes;                \
     };                                    \
-    HANDLE wait;                          \
   };                                      \
   struct uv_req_s* next_req;
 
@@ -83,10 +82,13 @@ typedef struct uv_buf_t {
     HANDLE pipeHandle;                    \
     struct uv_pipe_accept_s* next_pending; \
   } uv_pipe_accept_t;                     \
+                                          \
   typedef struct uv_tcp_accept_s {        \
     UV_REQ_FIELDS                         \
     SOCKET accept_socket;                 \
     char accept_buffer[sizeof(struct sockaddr_storage) * 2 + 32]; \
+    HANDLE event_handle;                  \
+    HANDLE wait_handle;                   \
     struct uv_tcp_accept_s* next_pending; \
   } uv_tcp_accept_t;
 
