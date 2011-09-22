@@ -32,7 +32,7 @@
  *  the optimization is temporarily disabled (threshold=0).  This will be
  *  revisited once node allocator is improved.)
  */
-const unsigned int uv_active_tcp_streams_threshold = 0;
+const unsigned int uv_active_tcp_streams_threshold = 1000;
 
 /*
  * Number of simultaneous pending AcceptEx calls.
