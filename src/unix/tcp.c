@@ -22,6 +22,7 @@
 #include "uv.h"
 #include "internal.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <assert.h>
@@ -30,6 +31,46 @@
 
 int uv_tcp_init(uv_loop_t* loop, uv_tcp_t* tcp) {
   uv__stream_init(loop, (uv_stream_t*)tcp, UV_TCP);
+  return 0;
+}
+
+
+static int is_local_addr4(const struct sockaddr_in* addr) {
+  /* 127.0.0.0/8 */
+  return (ntohl(addr->sin_addr.s_addr) & 0xff000000) == 0x7f000000;
+}
+
+
+static int is_local_addr6(const struct sockaddr_in6* addr) {
+  uint32_t a = ntohl(addr->sin6_addr.s6_addr32[0]);
+  uint32_t b = ntohl(addr->sin6_addr.s6_addr32[1]);
+  uint32_t c = ntohl(addr->sin6_addr.s6_addr32[2]);
+  uint32_t d = ntohl(addr->sin6_addr.s6_addr32[3]);
+
+  /* ::1/128, loopback. */
+  if (a == 0 && b == 0 && c == 0 && d == 1)
+    return 1;
+
+  /* ::ffff:127.0.0.0/104, IPv4-to-IPv6 range. */
+  if (a == 0 && b == 0 && c == 0xffff && (d & 0xff000000) == 0x7f000000)
+    return 1;
+
+  /* fe80::/10, link-local address range. Effectively fe80::/64. */
+  if (a == 0xfe800000 && b == 0)
+    return 1;
+
+  return 0;
+}
+
+
+static int is_local_addr(const struct sockaddr* addr) {
+  if (addr->sa_family == AF_INET)
+    return is_local_addr4((const struct sockaddr_in*) addr);
+
+  if (addr->sa_family == AF_INET6)
+    return is_local_addr6((const struct sockaddr_in6*) addr);
+
+  assert(0);
   return 0;
 }
 
@@ -111,6 +152,11 @@ static int uv__connect(uv_connect_t* req,
       handle->delayed_error = errno;
     else
       return uv__set_sys_error(handle->loop, errno);
+  }
+
+  if (is_local_addr(addr)) {
+    struct linger ll = { 1, 1 };
+    setsockopt(handle->io_watcher.fd, SOL_SOCKET, SO_LINGER, &ll, sizeof(ll));
   }
 
   uv__req_init(handle->loop, req, UV_CONNECT);
