@@ -85,7 +85,11 @@
 #define POST                                                                  \
   do {                                                                        \
     if ((cb) != NULL) {                                                       \
-      uv__work_submit((loop), &(req)->work_req, uv__fs_work, uv__fs_done);    \
+      uv__work_submit((loop),                                                 \
+                      &(req)->work_req,                                       \
+                      uv__fs_work,                                            \
+                      uv__fs_done,                                            \
+                      UV__THREADPOOL_IO);                                     \
       return 0;                                                               \
     }                                                                         \
     else {                                                                    \

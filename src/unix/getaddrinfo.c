@@ -147,7 +147,8 @@ int uv_getaddrinfo(uv_loop_t* loop,
   uv__work_submit(loop,
                   &req->work_req,
                   uv__getaddrinfo_work,
-                  uv__getaddrinfo_done);
+                  uv__getaddrinfo_done,
+                  UV__THREADPOOL_IO);
 
   return 0;
 }

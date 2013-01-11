@@ -45,6 +45,9 @@
 # include <CoreServices/CoreServices.h>
 #endif
 
+#define ACCESS_ONCE(type, var)                                                \
+  (*(volatile type*) &(var))
+
 #define UNREACHABLE()                                                         \
   do {                                                                        \
     assert(0 && "unreachable code");                                          \
@@ -89,6 +92,21 @@
 #ifndef UV__POLLHUP
 # define UV__POLLHUP  8
 #endif
+
+/* There are roughly as many CPU threads as there are CPUs in the machine.
+ *
+ * I/O threads have no such limitation, there can be hundreds of them.
+ * They're intended for workloads where most time is spent blocked inside
+ * system calls.
+ *
+ * Note that I/O threads run on a reduced stack to avoid consuming too much
+ * address space on 32 bits machines.
+ */
+enum {
+  UV__THREADPOOL_CPU = 0,
+  UV__THREADPOOL_IO  = 1,
+  UV__THREADPOOL_MAX
+};
 
 /* handle flags */
 enum {
@@ -162,7 +180,8 @@ void uv__signal_loop_cleanup(uv_loop_t* loop);
 void uv__work_submit(uv_loop_t* loop,
                      struct uv__work *w,
                      void (*work)(struct uv__work *w),
-                     void (*done)(struct uv__work *w, int status));
+                     void (*done)(struct uv__work *w, int status),
+                     unsigned int type);
 void uv__work_done(uv_async_t* handle, int status);
 
 /* platform specific */

@@ -49,6 +49,102 @@ static unsigned timer_cb_called;
 static unsigned getaddrinfo_cb_called;
 
 
+#if defined(_WIN32)
+
+static void saturate_io_threadpool(void) { }
+static void unblock_io_threadpool(void) { }
+
+#else /* !defined(_WIN32) */
+
+/* uv-unix effectively has two threadpools: one for CPU-bound tasks and one
+ * for I/O tasks. We need some special handling to saturate the second one.
+ */
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+#include <fcntl.h>
+#include <errno.h>
+
+struct io_task {
+  ngx_queue_t queue;
+  uv_fs_t fs_req;
+  int pipefd[2];
+  char buf[1];
+};
+
+static ngx_queue_t io_tasks;
+
+
+static void io_task_cleanup(struct io_task* task) {
+  uv_fs_req_cleanup(&task->fs_req);
+  ngx_queue_remove(&task->queue);
+  ngx_queue_init(&task->queue);
+  free(task);
+}
+
+
+static void io_read_cb(uv_fs_t* req) {
+  struct io_task* task;
+
+  task = container_of(req, struct io_task, fs_req);
+  io_task_cleanup(task);
+}
+
+
+static void saturate_io_threadpool(void) {
+  struct io_task* tasks[32];
+  struct io_task* task;
+  uv_loop_t* loop;
+  int cancelled;
+  unsigned i;
+
+  ngx_queue_init(&io_tasks);
+  loop = uv_default_loop();
+
+  for (;;) {
+    for (i = 0; i < ARRAY_SIZE(tasks); i++) {
+      task = calloc(1, sizeof(*task));
+      ASSERT(task != NULL);
+      ASSERT(0 == pipe(task->pipefd));
+      ASSERT(0 == uv_fs_read(loop,
+                             &task->fs_req,
+                             task->pipefd[0],
+                             task->buf,
+                             sizeof(task->buf),
+                             -1,
+                             io_read_cb));
+      ngx_queue_insert_tail(&io_tasks, &task->queue);
+      tasks[i] = task;
+    }
+
+    uv_sleep(250);
+
+    cancelled = 0;
+    for (i = 0; i < ARRAY_SIZE(tasks); i++)
+      if (uv_cancel((uv_req_t*) &tasks[i]->fs_req) == 0)
+        cancelled++;
+
+    if (cancelled != 0)
+      return;
+  }
+}
+
+
+static void unblock_io_threadpool(void) {
+  struct io_task* task;
+  ngx_queue_t* q;
+
+  ngx_queue_foreach(q, &io_tasks) {
+    task = ngx_queue_data(q, struct io_task, queue);
+    close(task->pipefd[0]);
+    close(task->pipefd[1]);
+  }
+}
+
+#endif /* defined(_WIN32) */
+
+
 static void work_cb(uv_work_t* req) {
   uv_mutex_lock(&signal_mutex);
   uv_cond_signal(&signal_cond);
@@ -91,12 +187,15 @@ static void saturate_threadpool(void) {
       break;
     }
   }
+
+  saturate_io_threadpool();
 }
 
 
 static void unblock_threadpool(void) {
   uv_mutex_unlock(&signal_mutex);
   uv_mutex_unlock(&wait_mutex);
+  unblock_io_threadpool();
 }
 
 
