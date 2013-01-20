@@ -41,7 +41,7 @@ static void log_progress(int total, int passed, int failed, const char* name) {
 
 
 const char* fmt(double d) {
-  static char buf[1024];
+  static char buf[4096];
   static char* p;
   uint64_t v;
 
