@@ -326,7 +326,30 @@ void uv_walk(uv_loop_t* loop, uv_walk_cb walk_cb, void* arg) {
 
 
 #ifndef NDEBUG
-static void uv__print_handles(uv_loop_t* loop, int only_active) {
+void uv_print_reqs(uv_loop_t* loop) {
+  const char* type;
+  ngx_queue_t* q;
+  uv_req_t* req;
+
+  if (loop == NULL)
+    loop = uv_default_loop();
+
+  ngx_queue_foreach(q, &loop->active_reqs) {
+    req = ngx_queue_data(q, uv_req_t, active_queue);
+
+    switch (req->type) {
+#define X(uc, lc) case UV_##uc: type = #lc; break;
+      UV_REQ_TYPE_MAP(X)
+#undef X
+      default: type = "<unknown>";
+    }
+
+    fprintf(stderr, "%p %s\n", (void*) req, type);
+  }
+}
+
+
+void uv_print_handles(uv_loop_t* loop, int only_active) {
   const char* type;
   ngx_queue_t* q;
   uv_handle_t* h;
@@ -355,16 +378,6 @@ static void uv__print_handles(uv_loop_t* loop, int only_active) {
             type,
             (void*)h);
   }
-}
-
-
-void uv_print_all_handles(uv_loop_t* loop) {
-  uv__print_handles(loop, 0);
-}
-
-
-void uv_print_active_handles(uv_loop_t* loop) {
-  uv__print_handles(loop, 1);
 }
 #endif
 
