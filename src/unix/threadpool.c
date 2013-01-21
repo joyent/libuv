@@ -24,24 +24,26 @@
 #include <limits.h>  /* PTHREAD_STACK_MIN */
 #include <unistd.h>  /* sysconf() */
 
-struct threadpool_ctx {
+struct thread_ctx {
   uv_cond_t cond;
   uv_mutex_t mutex;
   ngx_queue_t work_queue;
-  ngx_queue_t thread_queue;
+  pthread_t thread;
+  int quit;
+};
+
+struct threadpool_ctx {
+  uv_cond_t cond;
+  uv_mutex_t mutex;
+  unsigned int stack_size;
   unsigned int cur_threads;
   unsigned int max_threads;
+  struct thread_ctx thread_contexts[1];  /* Variadic length. */
 };
 
-struct thread_ctx {
-  ngx_queue_t queue;
-  pthread_t thread;
-};
-
+static struct threadpool_ctx* threadpools[UV__THREADPOOL_MAX];
 static uv_once_t once = UV_ONCE_INIT;
 static volatile int initialized;
-static ngx_queue_t exit_message;
-static struct threadpool_ctx threadpools[UV__THREADPOOL_MAX];
 
 
 static void uv__cancelled(struct uv__work* w) {
@@ -53,34 +55,30 @@ static void uv__cancelled(struct uv__work* w) {
  * never holds the global mutex and the loop-local mutex at the same time.
  */
 static void* worker(void* arg) {
-  struct threadpool_ctx* ctx;
+  struct thread_ctx* tc;
   struct uv__work* w;
   ngx_queue_t* q;
 
-  ctx = arg;
+  tc = arg;
 
   for (;;) {
-    uv_mutex_lock(&ctx->mutex);
+    uv_mutex_lock(&tc->mutex);
 
-    while (ngx_queue_empty(&ctx->work_queue))
-      uv_cond_wait(&ctx->cond, &ctx->mutex);
+    while (tc->quit == 0 && ngx_queue_empty(&tc->work_queue))
+      uv_cond_wait(&tc->cond, &tc->mutex);
 
-    q = ngx_queue_head(&ctx->work_queue);
-
-    if (q == &exit_message)
-      uv_cond_signal(&ctx->cond);
-    else {
-      ngx_queue_remove(q);
-      ngx_queue_init(q);  /* Signal uv_cancel() that the work req is
-                             executing. */
+    if (tc->quit != 0 && ngx_queue_empty(&tc->work_queue)) {
+      uv_mutex_unlock(&tc->mutex);
+      return NULL;
     }
 
-    uv_mutex_unlock(&ctx->mutex);
-
-    if (q == &exit_message)
-      break;
+    q = ngx_queue_head(&tc->work_queue);
+    ngx_queue_remove(q);
+    ngx_queue_init(q);  /* Signal uv_cancel() that the work req is executing. */
+    uv_mutex_unlock(&tc->mutex);
 
     w = ngx_queue_data(q, struct uv__work, wq);
+    assert(w->thread_ctx == tc);
     w->work(w);
 
     uv_mutex_lock(&w->loop->wq_mutex);
@@ -91,38 +89,70 @@ static void* worker(void* arg) {
     uv_mutex_unlock(&w->loop->wq_mutex);
   }
 
+  UNREACHABLE();
   return NULL;
 }
 
 
-static void threadpool_init(struct threadpool_ctx* ctx,
-                            unsigned int max_threads) {
+static struct threadpool_ctx* threadpool_new(unsigned int max_threads,
+                                             unsigned int stack_size) {
+  struct threadpool_ctx* ctx;
+
+  ctx = malloc(sizeof(*ctx) +
+               sizeof(ctx->thread_contexts[0]) * (max_threads - 1));
+
+  if (ctx == NULL)
+    abort();
+
   if (uv_cond_init(&ctx->cond))
     abort();
 
   if (uv_mutex_init(&ctx->mutex))
     abort();
 
-  ngx_queue_init(&ctx->work_queue);
-  ngx_queue_init(&ctx->thread_queue);
+  if (stack_size < PTHREAD_STACK_MIN)
+    stack_size = PTHREAD_STACK_MIN;
 
+  ctx->stack_size = stack_size;
   ctx->cur_threads = 0;
   ctx->max_threads = max_threads;
+
+  return ctx;
 }
 
 
 static void threadpool_destroy(struct threadpool_ctx* ctx) {
+  struct thread_ctx* tc;
+  unsigned int i;
+
   uv_mutex_lock(&ctx->mutex);
+
+  for (i = 0; i < ctx->cur_threads; i++) {
+    tc = ctx->thread_contexts + i;
+
+    uv_mutex_lock(&tc->mutex);
+    tc->quit = 1;
+    uv_cond_signal(&tc->cond);
+    uv_mutex_unlock(&tc->mutex);
+
+    if (pthread_join(tc->thread, NULL))
+      abort();
+
+    uv_mutex_destroy(&tc->mutex);
+    uv_cond_destroy(&tc->cond);
+  }
+
   uv_mutex_unlock(&ctx->mutex);
   uv_mutex_destroy(&ctx->mutex);
   uv_cond_destroy(&ctx->cond);
+  free(ctx);
 }
 
 
-static void threadpool_grow(struct threadpool_ctx* ctx, size_t stack_size) {
+static void threadpool_grow(struct threadpool_ctx* ctx) {
   struct thread_ctx* tc;
   pthread_attr_t attr;
-  int new_thread;
+  size_t stack_size;
 
   /* Cheap but safe check: max_threads is immutable, cur_threads is a naturally
    * aligned integer and doesn't need locking to read. Worst case, we first see
@@ -132,25 +162,22 @@ static void threadpool_grow(struct threadpool_ctx* ctx, size_t stack_size) {
   if (ACCESS_ONCE(unsigned int, ctx->cur_threads) == ctx->max_threads)
     return;
 
+  stack_size = ctx->stack_size;
+
   uv_mutex_lock(&ctx->mutex);
 
-  new_thread = (ctx->cur_threads < ctx->max_threads);
-  if (new_thread != 0)
-    ctx->cur_threads++;
+  if (ctx->cur_threads == ctx->max_threads)
+    goto out;
 
-  uv_mutex_unlock(&ctx->mutex);
+  tc = ctx->thread_contexts + ctx->cur_threads;
+  tc->quit = 0;
+  ngx_queue_init(&tc->work_queue);
 
-  if (new_thread == 0)
-    return;
+  if (uv_cond_init(&tc->cond))
+    abort();
 
-  tc = malloc(sizeof(*tc));
-  if (tc == NULL) {
-    uv_mutex_lock(&ctx->mutex);
-    assert(ctx->cur_threads > 0);
-    ctx->cur_threads--;
-    uv_mutex_unlock(&ctx->mutex);
-    return;
-  }
+  if (uv_mutex_init(&tc->mutex))
+    abort();
 
   if (pthread_attr_init(&attr))
     abort();
@@ -159,36 +186,16 @@ static void threadpool_grow(struct threadpool_ctx* ctx, size_t stack_size) {
     if (pthread_attr_setstacksize(&attr, stack_size))
       abort();
 
-  /* XXX set scheduling policy as well? */
-
-  if (pthread_create(&tc->thread, &attr, worker, ctx))
+  if (pthread_create(&tc->thread, &attr, worker, tc))
     abort();
 
   if (pthread_attr_destroy(&attr))
     abort();
 
-  uv_mutex_lock(&ctx->mutex);
-  ngx_queue_insert_tail(&ctx->thread_queue, &tc->queue);
-  uv_mutex_unlock(&ctx->mutex);
-}
+  ctx->cur_threads++;
 
+out:
 
-static void post(struct threadpool_ctx* ctx, ngx_queue_t* q) {
-  const size_t stack_sizes[UV__THREADPOOL_MAX] = { 262144, 32768 };
-  unsigned int index;
-  size_t stack_size;
-
-  index = ctx - threadpools;
-  assert(index < ARRAY_SIZE(stack_sizes));
-  stack_size = stack_sizes[index];
-
-  if (stack_size < PTHREAD_STACK_MIN)
-    stack_size = PTHREAD_STACK_MIN;
-
-  threadpool_grow(ctx, stack_size);
-  uv_mutex_lock(&ctx->mutex);
-  ngx_queue_insert_tail(&ctx->work_queue, q);
-  uv_cond_signal(&ctx->cond);
   uv_mutex_unlock(&ctx->mutex);
 }
 
@@ -200,8 +207,8 @@ static void init_once(void) {
   if (numcpus <= 0)
     numcpus = 1;
 
-  threadpool_init(threadpools + UV__THREADPOOL_CPU, numcpus);
-  threadpool_init(threadpools + UV__THREADPOOL_IO, numcpus * 16);
+  threadpools[UV__THREADPOOL_CPU] = threadpool_new(numcpus, 0);
+  threadpools[UV__THREADPOOL_IO] = threadpool_new(numcpus, 32768);
   initialized = 1;
 }
 
@@ -215,44 +222,14 @@ static void init_once(void) {
 #if defined(__GNUC__)
 __attribute__((destructor))
 static void cleanup(void) {
-  struct threadpool_ctx* ctx;
-  struct thread_ctx* tc;
-  ngx_queue_t* q;
   unsigned int i;
-  int empty;
 
   if (initialized == 0)
     return;
 
-  for (i = 0; i < ARRAY_SIZE(threadpools); i++)
-    post(threadpools + i, &exit_message);
-
   for (i = 0; i < ARRAY_SIZE(threadpools); i++) {
-    ctx = threadpools + i;
-
-    for (;;) {
-      uv_mutex_lock(&ctx->mutex);
-
-      empty = ngx_queue_empty(&ctx->thread_queue);
-      if (empty == 0) {
-        q = ngx_queue_head(&ctx->thread_queue);
-        ngx_queue_remove(q);
-      }
-
-      uv_mutex_unlock(&ctx->mutex);
-
-      if (empty != 0)
-        break;
-
-      tc = ngx_queue_data(q, struct thread_ctx, queue);
-
-      if (pthread_join(tc->thread, NULL))
-        abort();
-
-      free(tc);
-    }
-
-    threadpool_destroy(ctx);
+    threadpool_destroy(threadpools[i]);
+    threadpools[i] = NULL;
   }
 
   initialized = 0;
@@ -264,27 +241,55 @@ void uv__work_submit(uv_loop_t* loop,
                      struct uv__work* w,
                      void (*work)(struct uv__work* w),
                      void (*done)(struct uv__work* w, int status),
-                     unsigned int type) {
+                     unsigned int type,
+                     long hint) {
+  struct threadpool_ctx* ctx;
+  struct thread_ctx* tc;
+
   assert(type < ARRAY_SIZE(threadpools));
   uv_once(&once, init_once);
   w->loop = loop;
   w->work = work;
   w->done = done;
-  post(threadpools + type, &w->wq);
+
+  ctx = threadpools[type];
+  threadpool_grow(ctx);  /* TODO Only grow when all threads are busy. */
+
+  if (hint == -1) {
+    /* TODO Find the least loaded worker thread. */
+    hint = 0;
+  }
+  else {
+    hint %= ACCESS_ONCE(unsigned int, ctx->cur_threads);
+
+    /* Sign of remainder with signed modulus depends on implementation.
+     * Trust that the compiler is smart enough to optimize away the
+     * comparison when it's positive.
+     */
+    if (hint < 0)
+      hint = -hint;
+  }
+
+  assert(hint >= 0);
+  assert(hint < (int) ctx->cur_threads);
+
+  tc = w->thread_ctx = ctx->thread_contexts + hint;
+
+  uv_mutex_lock(&tc->mutex);
+  ngx_queue_insert_tail(&tc->work_queue, &w->wq);
+  uv_cond_signal(&tc->cond);
+  uv_mutex_unlock(&tc->mutex);
 }
 
 
 static int uv__work_cancel(uv_loop_t* loop,
                            uv_req_t* req,
-                           struct uv__work* w,
-                           unsigned int type) {
-  struct threadpool_ctx* ctx;
+                           struct uv__work* w) {
+  struct thread_ctx* tc;
   int cancelled;
 
-  assert(type < ARRAY_SIZE(threadpools));
-
-  ctx = threadpools + type;
-  uv_mutex_lock(&ctx->mutex);
+  tc = w->thread_ctx;
+  uv_mutex_lock(&tc->mutex);
   uv_mutex_lock(&w->loop->wq_mutex);
 
   cancelled = !ngx_queue_empty(&w->wq) && w->work != NULL;
@@ -292,7 +297,7 @@ static int uv__work_cancel(uv_loop_t* loop,
     ngx_queue_remove(&w->wq);
 
   uv_mutex_unlock(&w->loop->wq_mutex);
-  uv_mutex_unlock(&ctx->mutex);
+  uv_mutex_unlock(&tc->mutex);
 
   if (!cancelled)
     return -1;
@@ -373,35 +378,33 @@ int uv_queue_work(uv_loop_t* loop,
                   &req->work_req,
                   uv__queue_work,
                   uv__queue_done,
-                  UV__THREADPOOL_CPU);
+                  UV__THREADPOOL_CPU,
+                  (long) req >> 4);
+
   return 0;
 }
 
 
 int uv_cancel(uv_req_t* req) {
   struct uv__work* wreq;
-  unsigned int type;
   uv_loop_t* loop;
 
   switch (req->type) {
   case UV_FS:
     loop =  ((uv_fs_t*) req)->loop;
     wreq = &((uv_fs_t*) req)->work_req;
-    type = UV__THREADPOOL_IO;
     break;
   case UV_GETADDRINFO:
     loop =  ((uv_getaddrinfo_t*) req)->loop;
     wreq = &((uv_getaddrinfo_t*) req)->work_req;
-    type = UV__THREADPOOL_IO;
     break;
   case UV_WORK:
     loop =  ((uv_work_t*) req)->loop;
     wreq = &((uv_work_t*) req)->work_req;
-    type = UV__THREADPOOL_CPU;
     break;
   default:
     return -1;
   }
 
-  return uv__work_cancel(loop, req, wreq, type);
+  return uv__work_cancel(loop, req, wreq);
 }

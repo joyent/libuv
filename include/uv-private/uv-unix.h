@@ -83,6 +83,7 @@ struct uv__work {
   void (*work)(struct uv__work *w);
   void (*done)(struct uv__work *w, int status);
   struct uv_loop_s* loop;
+  void* thread_ctx;
   ngx_queue_t wq;
 };
 

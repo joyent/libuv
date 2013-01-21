@@ -82,14 +82,15 @@
   }                                                                           \
   while (0)
 
-#define POST                                                                  \
+#define POST(hint)                                                            \
   do {                                                                        \
     if ((cb) != NULL) {                                                       \
       uv__work_submit((loop),                                                 \
                       &(req)->work_req,                                       \
                       uv__fs_work,                                            \
                       uv__fs_done,                                            \
-                      UV__THREADPOOL_IO);                                     \
+                      UV__THREADPOOL_IO,                                      \
+                      (hint));                                                \
       return 0;                                                               \
     }                                                                         \
     else {                                                                    \
@@ -583,6 +584,24 @@ static void uv__fs_done(struct uv__work* w, int status) {
 }
 
 
+/* Jenkins hash. */
+static long hash(const char* s) {
+  long h;
+
+  for (h = 0; *s != '\0'; s++) {
+    h += *s;
+    h += h << 10;
+    h ^= h >> 6;
+  }
+
+  h += h << 3;
+  h ^= h >> 1;
+  h += h << 15;
+
+  return h;
+}
+
+
 int uv_fs_chmod(uv_loop_t* loop,
                 uv_fs_t* req,
                 const char* path,
@@ -591,7 +610,7 @@ int uv_fs_chmod(uv_loop_t* loop,
   INIT(CHMOD);
   PATH;
   req->mode = mode;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -605,14 +624,14 @@ int uv_fs_chown(uv_loop_t* loop,
   PATH;
   req->uid = uid;
   req->gid = gid;
-  POST;
+  POST(hash(path));
 }
 
 
 int uv_fs_close(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb) {
   INIT(CLOSE);
   req->file = file;
-  POST;
+  POST(file);
 }
 
 
@@ -624,7 +643,7 @@ int uv_fs_fchmod(uv_loop_t* loop,
   INIT(FCHMOD);
   req->file = file;
   req->mode = mode;
-  POST;
+  POST(file);
 }
 
 
@@ -638,28 +657,28 @@ int uv_fs_fchown(uv_loop_t* loop,
   req->file = file;
   req->uid = uid;
   req->gid = gid;
-  POST;
+  POST(file);
 }
 
 
 int uv_fs_fdatasync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb) {
   INIT(FDATASYNC);
   req->file = file;
-  POST;
+  POST(file);
 }
 
 
 int uv_fs_fstat(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb) {
   INIT(FSTAT);
   req->file = file;
-  POST;
+  POST(file);
 }
 
 
 int uv_fs_fsync(uv_loop_t* loop, uv_fs_t* req, uv_file file, uv_fs_cb cb) {
   INIT(FSYNC);
   req->file = file;
-  POST;
+  POST(file);
 }
 
 
@@ -671,7 +690,7 @@ int uv_fs_ftruncate(uv_loop_t* loop,
   INIT(FTRUNCATE);
   req->file = file;
   req->off = off;
-  POST;
+  POST(file);
 }
 
 
@@ -685,14 +704,14 @@ int uv_fs_futime(uv_loop_t* loop,
   req->file = file;
   req->atime = atime;
   req->mtime = mtime;
-  POST;
+  POST(file);
 }
 
 
 int uv_fs_lstat(uv_loop_t* loop, uv_fs_t* req, const char* path, uv_fs_cb cb) {
   INIT(LSTAT);
   PATH;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -703,7 +722,7 @@ int uv_fs_link(uv_loop_t* loop,
                uv_fs_cb cb) {
   INIT(LINK);
   PATH2;
-  POST;
+  POST(hash(path));  /* TODO Take both path and new_path in account. */
 }
 
 
@@ -715,7 +734,7 @@ int uv_fs_mkdir(uv_loop_t* loop,
   INIT(MKDIR);
   PATH;
   req->mode = mode;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -729,7 +748,7 @@ int uv_fs_open(uv_loop_t* loop,
   PATH;
   req->flags = flags;
   req->mode = mode;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -744,7 +763,7 @@ int uv_fs_read(uv_loop_t* loop, uv_fs_t* req,
   req->buf = buf;
   req->len = len;
   req->off = off;
-  POST;
+  POST(file);
 }
 
 
@@ -756,7 +775,7 @@ int uv_fs_readdir(uv_loop_t* loop,
   INIT(READDIR);
   PATH;
   req->flags = flags;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -766,7 +785,7 @@ int uv_fs_readlink(uv_loop_t* loop,
                    uv_fs_cb cb) {
   INIT(READLINK);
   PATH;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -777,14 +796,14 @@ int uv_fs_rename(uv_loop_t* loop,
                  uv_fs_cb cb) {
   INIT(RENAME);
   PATH2;
-  POST;
+  POST(hash(path));  /* TODO Take both path and new_path in account. */
 }
 
 
 int uv_fs_rmdir(uv_loop_t* loop, uv_fs_t* req, const char* path, uv_fs_cb cb) {
   INIT(RMDIR);
   PATH;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -800,14 +819,14 @@ int uv_fs_sendfile(uv_loop_t* loop,
   req->file = out_fd;
   req->off = off;
   req->len = len;
-  POST;
+  POST(in_fd);  /* TODO Take both in_fd and out_fd in account. */
 }
 
 
 int uv_fs_stat(uv_loop_t* loop, uv_fs_t* req, const char* path, uv_fs_cb cb) {
   INIT(STAT);
   PATH;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -820,14 +839,14 @@ int uv_fs_symlink(uv_loop_t* loop,
   INIT(SYMLINK);
   PATH2;
   req->flags = flags;
-  POST;
+  POST(hash(path));  /* TODO Take both path and new_path in account. */
 }
 
 
 int uv_fs_unlink(uv_loop_t* loop, uv_fs_t* req, const char* path, uv_fs_cb cb) {
   INIT(UNLINK);
   PATH;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -841,7 +860,7 @@ int uv_fs_utime(uv_loop_t* loop,
   PATH;
   req->atime = atime;
   req->mtime = mtime;
-  POST;
+  POST(hash(path));
 }
 
 
@@ -857,7 +876,7 @@ int uv_fs_write(uv_loop_t* loop,
   req->buf = buf;
   req->len = len;
   req->off = off;
-  POST;
+  POST(file);
 }
 
 

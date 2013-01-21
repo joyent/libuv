@@ -181,7 +181,8 @@ void uv__work_submit(uv_loop_t* loop,
                      struct uv__work *w,
                      void (*work)(struct uv__work *w),
                      void (*done)(struct uv__work *w, int status),
-                     unsigned int type);
+                     unsigned int type,
+                     long hint);
 void uv__work_done(uv_async_t* handle, int status);
 
 /* platform specific */
