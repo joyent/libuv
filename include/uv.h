@@ -69,6 +69,16 @@ extern "C" {
 # include "uv-private/uv-win.h"
 #endif
 
+#ifdef __cplusplus
+# define UV_IF_CPP(s) s
+# define UV_IF_C(s)
+#else
+# define UV_IF_CPP(s)
+# define UV_IF_C(s)   s
+#endif
+
+#define UV_CHILD_OF(clazz) UV_IF_CPP(: public clazz)
+
 /* Expand this list if necessary. */
 #define UV_ERRNO_MAP(XX)                                                      \
   XX( -1, UNKNOWN, "unknown error")                                           \
@@ -435,8 +445,8 @@ UV_PRIVATE_REQ_TYPES
 UV_EXTERN int uv_shutdown(uv_shutdown_t* req, uv_stream_t* handle,
     uv_shutdown_cb cb);
 
-struct uv_shutdown_s {
-  UV_REQ_FIELDS
+struct uv_shutdown_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_stream_t* handle;
   uv_shutdown_cb cb;
   UV_SHUTDOWN_PRIVATE_FIELDS
@@ -539,8 +549,8 @@ UV_EXTERN size_t uv_strlcat(char* dst, const char* src, size_t size);
  * uv_stream_t is the parent class of uv_tcp_t, uv_pipe_t, uv_tty_t, and
  * soon uv_file_t.
  */
-struct uv_stream_s {
-  UV_HANDLE_FIELDS
+struct uv_stream_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_STREAM_FIELDS
 };
 
@@ -617,8 +627,8 @@ UV_EXTERN int uv_write2(uv_write_t* req, uv_stream_t* handle, uv_buf_t bufs[],
     int bufcnt, uv_stream_t* send_handle, uv_write_cb cb);
 
 /* uv_write_t is a subclass of uv_req_t */
-struct uv_write_s {
-  UV_REQ_FIELDS
+struct uv_write_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_write_cb cb;
   uv_stream_t* send_handle;
   uv_stream_t* handle;
@@ -648,9 +658,9 @@ UV_EXTERN int uv_is_closing(const uv_handle_t* handle);
  *
  * Represents a TCP stream or TCP server.
  */
-struct uv_tcp_s {
-  UV_HANDLE_FIELDS
-  UV_STREAM_FIELDS
+struct uv_tcp_s UV_CHILD_OF(uv_stream_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
+  UV_IF_C(UV_STREAM_FIELDS)
   UV_TCP_PRIVATE_FIELDS
 };
 
@@ -702,8 +712,8 @@ UV_EXTERN int uv_tcp_connect6(uv_connect_t* req, uv_tcp_t* handle,
     struct sockaddr_in6 address, uv_connect_cb cb);
 
 /* uv_connect_t is a subclass of uv_req_t */
-struct uv_connect_s {
-  UV_REQ_FIELDS
+struct uv_connect_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_connect_cb cb;
   uv_stream_t* handle;
   UV_CONNECT_PRIVATE_FIELDS
@@ -748,14 +758,14 @@ typedef void (*uv_udp_recv_cb)(uv_udp_t* handle, ssize_t nread, uv_buf_t buf,
     struct sockaddr* addr, unsigned flags);
 
 /* uv_udp_t is a subclass of uv_handle_t */
-struct uv_udp_s {
-  UV_HANDLE_FIELDS
+struct uv_udp_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_UDP_PRIVATE_FIELDS
 };
 
 /* uv_udp_send_t is a subclass of uv_req_t */
-struct uv_udp_send_s {
-  UV_REQ_FIELDS
+struct uv_udp_send_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_udp_t* handle;
   uv_udp_send_cb cb;
   UV_UDP_SEND_PRIVATE_FIELDS
@@ -944,9 +954,9 @@ UV_EXTERN int uv_udp_recv_stop(uv_udp_t* handle);
  *
  * Representing a stream for the console.
  */
-struct uv_tty_s {
-  UV_HANDLE_FIELDS
-  UV_STREAM_FIELDS
+struct uv_tty_s UV_CHILD_OF(uv_stream_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
+  UV_IF_C(UV_STREAM_FIELDS)
   UV_TTY_PRIVATE_FIELDS
 };
 
@@ -993,9 +1003,9 @@ UV_EXTERN uv_handle_type uv_guess_handle(uv_file file);
  * Representing a pipe stream or pipe server. On Windows this is a Named
  * Pipe. On Unix this is a UNIX domain socket.
  */
-struct uv_pipe_s {
-  UV_HANDLE_FIELDS
-  UV_STREAM_FIELDS
+struct uv_pipe_s UV_CHILD_OF(uv_stream_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
+  UV_IF_C(UV_STREAM_FIELDS)
   int ipc; /* non-zero if this pipe is used for passing handles */
   UV_PIPE_PRIVATE_FIELDS
 };
@@ -1053,8 +1063,8 @@ UV_EXTERN void uv_pipe_pending_instances(uv_pipe_t* handle, int count);
  * On windows only sockets can be polled with uv_poll. On unix any file
  * descriptor that would be accepted by poll(2) can be used with uv_poll.
  */
-struct uv_poll_s {
-  UV_HANDLE_FIELDS
+struct uv_poll_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   uv_poll_cb poll_cb;
   UV_POLL_PRIVATE_FIELDS
 };
@@ -1098,8 +1108,8 @@ UV_EXTERN int uv_poll_stop(uv_poll_t* handle);
  * Every active prepare handle gets its callback called exactly once per loop
  * iteration, just before the system blocks to wait for completed i/o.
  */
-struct uv_prepare_s {
-  UV_HANDLE_FIELDS
+struct uv_prepare_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_PREPARE_PRIVATE_FIELDS
 };
 
@@ -1116,8 +1126,8 @@ UV_EXTERN int uv_prepare_stop(uv_prepare_t* prepare);
  * Every active check handle gets its callback called exactly once per loop
  * iteration, just after the system returns from blocking.
  */
-struct uv_check_s {
-  UV_HANDLE_FIELDS
+struct uv_check_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_CHECK_PRIVATE_FIELDS
 };
 
@@ -1136,8 +1146,8 @@ UV_EXTERN int uv_check_stop(uv_check_t* check);
  * When there are multiple "idle" handles active, their callbacks are called
  * in turn.
  */
-struct uv_idle_s {
-  UV_HANDLE_FIELDS
+struct uv_idle_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_IDLE_PRIVATE_FIELDS
 };
 
@@ -1157,8 +1167,8 @@ UV_EXTERN int uv_idle_stop(uv_idle_t* idle);
  * is called at least once after the call to async_send. Unlike all other
  * libuv functions, uv_async_send can be called from another thread.
  */
-struct uv_async_s {
-  UV_HANDLE_FIELDS
+struct uv_async_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_ASYNC_PRIVATE_FIELDS
 };
 
@@ -1178,8 +1188,8 @@ UV_EXTERN int uv_async_send(uv_async_t* async);
  *
  * Used to get woken up at a specified time in the future.
  */
-struct uv_timer_s {
-  UV_HANDLE_FIELDS
+struct uv_timer_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   UV_TIMER_PRIVATE_FIELDS
 };
 
@@ -1223,8 +1233,8 @@ UV_EXTERN uint64_t uv_timer_get_repeat(const uv_timer_t* handle);
  *
  * Request object for uv_getaddrinfo.
  */
-struct uv_getaddrinfo_s {
-  UV_REQ_FIELDS
+struct uv_getaddrinfo_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   /* read-only */
   uv_loop_t* loop;
   UV_GETADDRINFO_PRIVATE_FIELDS
@@ -1373,8 +1383,8 @@ enum uv_process_flags {
 /*
  * uv_process_t is a subclass of uv_handle_t
  */
-struct uv_process_s {
-  UV_HANDLE_FIELDS
+struct uv_process_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   uv_exit_cb exit_cb;
   int pid;
   UV_PROCESS_PRIVATE_FIELDS
@@ -1399,8 +1409,8 @@ UV_EXTERN uv_err_t uv_kill(int pid, int signum);
 /*
  * uv_work_t is a subclass of uv_req_t
  */
-struct uv_work_s {
-  UV_REQ_FIELDS
+struct uv_work_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_loop_t* loop;
   uv_work_cb work_cb;
   uv_after_work_cb after_work_cb;
@@ -1524,8 +1534,8 @@ typedef enum {
 } uv_fs_type;
 
 /* uv_fs_t is a subclass of uv_req_t */
-struct uv_fs_s {
-  UV_REQ_FIELDS
+struct uv_fs_s UV_CHILD_OF(uv_req_s) {
+  UV_IF_C(UV_REQ_FIELDS)
   uv_fs_type fs_type;
   uv_loop_t* loop;
   uv_fs_cb cb;
@@ -1633,9 +1643,9 @@ enum uv_fs_event {
 };
 
 
-struct uv_fs_event_s {
-  UV_HANDLE_FIELDS
-  char* filename;
+struct uv_fs_event_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
+  char* filename;  /* Read-only. */
   UV_FS_EVENT_PRIVATE_FIELDS
 };
 
@@ -1643,8 +1653,8 @@ struct uv_fs_event_s {
 /*
  * uv_fs_stat() based polling file watcher.
  */
-struct uv_fs_poll_s {
-  UV_HANDLE_FIELDS
+struct uv_fs_poll_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   /* Private, don't touch. */
   void* poll_ctx;
 };
@@ -1709,8 +1719,8 @@ UV_EXTERN int uv_fs_poll_stop(uv_fs_poll_t* handle);
  * Note that calls to raise() or abort() to programmatically raise a signal are
  * not detected by libuv; these will not trigger a signal watcher.
  */
-struct uv_signal_s {
-  UV_HANDLE_FIELDS
+struct uv_signal_s UV_CHILD_OF(uv_handle_s) {
+  UV_IF_C(UV_HANDLE_FIELDS)
   uv_signal_cb signal_cb;
   int signum;
   UV_SIGNAL_PRIVATE_FIELDS
